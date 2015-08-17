@@ -1,10 +1,13 @@
 #!/usr/bin/env ruby
 
+require 'optparse'
+require 'nokogiri'
+require 'open-uri'
+require 'fileutils'
+
 # parse commandline options
 
 def parseopts()
-
-	require 'optparse'
 
 	options = {}
 
@@ -44,9 +47,6 @@ end
 
 def getsummary(url="")
 
-	require 'nokogiri'
-	require 'open-uri'
-
 	doc = Nokogiri::HTML(open(url))
 	
 	content = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.repository-meta div.repository-description").text
@@ -55,6 +55,81 @@ def getsummary(url="")
 	summary = content.gsub(/\[.*\]/,'').strip!
 
 	return summary
+
+end
+
+def getsource(url="")
+
+	if url.index("github")
+
+		doc = Nokogiri::HTML(open(url + "/releases"))
+
+		rel = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content").at_css("div.release-timeline")
+
+		version = ""
+
+		source = ""
+
+		# if has releases, download tarball and get tarball url
+		# if not, use git
+		if rel then
+
+			version = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.release-timeline div.label-latest div.release-meta ul.tag-references span.css-truncate-target").text
+
+			# url = https://github.com/marguerite/golang-packaging to get https://github.com
+			prefix = url.gsub(/\/.*$/,'') + "//" + url.gsub(/^(https:\/\/|http:\/\/)/,'').gsub(/\/.*$/,'')
+
+			source = prefix + doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.release-timeline div.label-latest div.release-body ul.release-downloads li:nth-child(2) a")[0]["href"]
+
+			source = githubconvert(source)
+
+		else
+			p false
+		end
+
+	elsif url.index("code.google.com")
+
+	else
+
+		raise "We currently only supports github and googlecode. maybe -p to specify its importpath and -u for its github/googlecode url?"
+
+	end
+
+	download(source)
+
+	return version, source
+
+end
+
+def githubconvert(url="")
+
+	# convert https://github.com/marguerite/golang-packaging/archive/8.tar.gz to archive/8/name-8.tar.gz
+	if url.index("github") then
+
+		toreplace = url.gsub(/^.*archive\//,'')	# 8.0.0.tar.gz
+
+		version = toreplace.gsub(/\.tar.*$/,'') # 8.0.0
+
+		suffix = toreplace.gsub(version,'') # .tar.gz
+
+		name = url.gsub(/\/archive.*$/,'').gsub(/^(https:\/\/|http:\/\/)/,'').split("/")[2] # golang-packaging
+		replace = "#{version}/#{name}-#{version}#{suffix}"
+
+		newurl = url.gsub(/\/archive.*$/,'') + "/archive/" + replace
+
+		return newurl
+
+	else
+
+		return url	
+
+	end
+
+end
+
+def download(url="")
+
+	system "wget #{url}"
 
 end
 
@@ -70,9 +145,7 @@ def createprj(pkgname="")
 
 end
 
-def fill(file="", name="",url="",summary="")
-
-	require 'fileutils'
+def fill(file="", name="",version="",summary="",url="",source="")
 
 	open("#{file}.new",'w') do |f1|
 
@@ -83,6 +156,14 @@ def fill(file="", name="",url="",summary="")
 				if l.index('@NAME@') then
 
 					f1 << l.gsub('@NAME@',name)
+
+					next
+
+				end
+
+				if l.index('@VERSION') then
+
+					f1 << l.gsub('@VERSION@',version)
 
 					next
 
@@ -104,6 +185,14 @@ def fill(file="", name="",url="",summary="")
 
 				end
 
+				if l.index('@SOURCE@') then
+
+					f1 << l.gsub('@SOURCE@',source)
+
+					next
+
+				end
+
 				f1 << l
 
 			end
@@ -120,25 +209,25 @@ def init()
 
 	opts = parseopts()
 
-	@url = opts[:url]
+	url = opts[:url]
 
-	@importpath = opts[:importpath]
+	importpath = opts[:importpath]
 
-	@pkgname = opts[:pkgname]
+	pkgname = opts[:pkgname]
 
-	@version = opts[:version]
+	version = opts[:version]
 
-	@source = opts[:source]
+	source = opts[:source]
 
-	if @url then
+	if url then
 
-		unless @importpath then
+		unless importpath then
 
-			@importpath = getimportpath(@url)
+			importpath = getimportpath(url)
 
 		end
 
-		array = @importpath.split("/")
+		array = importpath.split("/")
 
 		website = array[0].gsub(/(\.com|\.org|\.net|\.in)/,'')
 
@@ -146,9 +235,9 @@ def init()
 
 		name = array[2]
 
-		unless @pkgname then
+		unless pkgname then
 
-			@pkgname = "golang-#{website}-#{author}-#{name}"
+			pkgname = "golang-#{website}-#{author}-#{name}"
 
 		end
 
@@ -160,15 +249,25 @@ def init()
 
 	# Summary
 
-	@summary = getsummary(@url)
+	summary = getsummary(url)
+
+	# Source
+
+	# avoid download twice
+
+	vs = getsource(url)	
+
+	version = vs[0]
+
+	source = vs[1]
 
 	# process
 
-	createprj(@pkgname)
+	createprj(pkgname)
 
-	fcopy("#{@pkgname}/#{@pkgname}.spec")
+	fcopy("#{pkgname}/#{pkgname}.spec")
 
-	fill("#{@pkgname}/#{@pkgname}.spec",@pkgname,@url,@summary)
+	fill("#{pkgname}/#{pkgname}.spec",pkgname,version,summary,url,source)
 
 end
 
