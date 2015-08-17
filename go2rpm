@@ -1,0 +1,175 @@
+#!/usr/bin/env ruby
+
+# parse commandline options
+
+def parseopts()
+
+	require 'optparse'
+
+	options = {}
+
+	OptionParser.new do |opts|
+	
+		opts.banner = "Usage: go2rpm [options]"
+
+		opts.on('-p', '--path IMPORTPATH', 'IMPORTPATH') { |v|
+			options[:importpath] = v }
+
+		opts.on('-u', '--url url', 'Upstream URL') { |v|
+			options[:url] = v }
+
+		opts.on('-n', '--name pkgname', 'Package Name') { |v|
+			options[:pkgname] = v }
+		
+		opts.on('-v', '--version version', 'Package Version') { |v|
+			options[:version] = v }
+
+		opts.on('-s', '--source tarball', 'Source') { |v|
+			options[:source] = v }
+
+
+	end.parse!
+
+	return options
+
+end
+
+def getimportpath(url="")
+
+	importpath = url.gsub(/^(https:\/\/|http:\/\/)/,'')
+
+	return importpath
+
+end
+
+def getsummary(url="")
+
+	require 'nokogiri'
+	require 'open-uri'
+
+	doc = Nokogiri::HTML(open(url))
+	
+	content = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.repository-meta div.repository-description").text
+
+	# remove "\n" and contents in [] block
+	summary = content.gsub(/\[.*\]/,'').strip!
+
+	return summary
+
+end
+
+def fcopy(dest="", orig="./template.spec.in")
+
+	system "cp -r #{orig} #{dest}"		
+
+end
+
+def createprj(pkgname="")
+
+	system "mkdir #{pkgname}"
+
+end
+
+def fill(file="", name="",url="",summary="")
+
+	require 'fileutils'
+
+	open("#{file}.new",'w') do |f1|
+
+		open(file,'r') do |f2|
+
+			f2.each_line do |l|
+
+				if l.index('@NAME@') then
+
+					f1 << l.gsub('@NAME@',name)
+
+					next
+
+				end
+
+				if l.index('@SUMMARY@') then
+
+					f1 << l.gsub('@SUMMARY@',summary)
+
+					next
+
+				end
+
+				if l.index('@URL@') then
+
+					f1 << l.gsub('@URL@',url)
+
+					next
+
+				end
+
+				f1 << l
+
+			end
+
+		end
+
+	end
+
+	FileUtils.mv("#{file}.new",file)
+
+end
+
+def init()
+
+	opts = parseopts()
+
+	@url = opts[:url]
+
+	@importpath = opts[:importpath]
+
+	@pkgname = opts[:pkgname]
+
+	@version = opts[:version]
+
+	@source = opts[:source]
+
+	if @url then
+
+		unless @importpath then
+
+			@importpath = getimportpath(@url)
+
+		end
+
+		array = @importpath.split("/")
+
+		website = array[0].gsub(/(\.com|\.org|\.net|\.in)/,'')
+
+		author = array[1]
+
+		name = array[2]
+
+		unless @pkgname then
+
+			@pkgname = "golang-#{website}-#{author}-#{name}"
+
+		end
+
+	else
+
+		raise "URL is empty, please specify with -u."
+
+	end
+
+	# Summary
+
+	@summary = getsummary(@url)
+
+	# process
+
+	createprj(@pkgname)
+
+	fcopy("#{@pkgname}/#{@pkgname}.spec")
+
+	fill("#{@pkgname}/#{@pkgname}.spec",@pkgname,@url,@summary)
+
+end
+
+init()
