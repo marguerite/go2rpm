@@ -1,9 +1,12 @@
 #!/usr/bin/env ruby
 
+require 'rubygems'
 require 'optparse'
 require 'nokogiri'
 require 'open-uri'
 require 'fileutils'
+require 'git'
+require 'date'
 
 # parse commandline options
 
@@ -30,6 +33,9 @@ def parseopts()
 		opts.on('-s', '--source tarball', 'Source') { |v|
 			options[:source] = v }
 
+		opts.on('-f', '--force-git', 'Force git version even there\'s releases') { |v|
+			options[:forcefit] = v }
+
 
 	end.parse!
 
@@ -47,18 +53,30 @@ end
 
 def getsummary(url="")
 
-	doc = Nokogiri::HTML(open(url))
-	
-	content = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.repository-meta div.repository-description").text
+	if url.index("github")
 
-	# remove "\n" and contents in [] block
-	summary = content.gsub(/\[.*\]/,'').strip!
+		doc = Nokogiri::HTML(open(url))
+	
+		content = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.repository-meta div.repository-description").text
+
+		# remove "\n" and contents in [] block
+		summary = content.gsub(/\[.*\]/,'').strip!
+
+	elsif url.index('code.google.com')
+
+		raise "currently not supported"
+
+	else
+
+		raise "currently we only support github"
+
+	end
 
 	return summary
 
 end
 
-def getsource(url="")
+def getsource(url="",forcegit=false)
 
 	if url.index("github")
 
@@ -76,15 +94,34 @@ def getsource(url="")
 
 			version = doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.release-timeline div.label-latest div.release-meta ul.tag-references span.css-truncate-target").text
 
-			# url = https://github.com/marguerite/golang-packaging to get https://github.com
-			prefix = url.gsub(/\/.*$/,'') + "//" + url.gsub(/^(https:\/\/|http:\/\/)/,'').gsub(/\/.*$/,'')
+			unless forcegit then
+				# url = https://github.com/marguerite/golang-packaging to get https://github.com
+				prefix = url.gsub(/\/.*$/,'') + "//" + url.gsub(/^(https:\/\/|http:\/\/)/,'').gsub(/\/.*$/,'')
 
-			source = prefix + doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.release-timeline div.label-latest div.release-body ul.release-downloads li:nth-child(2) a")[0]["href"]
+				source = prefix + doc.css("div.wrapper div.site div.container div.repo-container div.repository-content div.release-timeline div.label-latest div.release-body ul.release-downloads li:nth-child(2) a")[0]["href"]
 
-			source = githubconvert(source)
+				source = convert(source)
+
+				download(source)
+
+			else
+
+				s = gitsource(url,true,version)
+
+				version = s[0]
+
+				source = s[1]
+
+			end
 
 		else
-			p false
+
+			s = gitsource(url)
+
+			version = s[0]
+
+			source = s[1]
+
 		end
 
 	elsif url.index("code.google.com")
@@ -95,13 +132,54 @@ def getsource(url="")
 
 	end
 
-	download(source)
-
 	return version, source
 
 end
 
-def githubconvert(url="")
+def gitsource(url="",forced=false,ver="")
+
+	name = url.gsub(/^(https:\/\/|http:\/\/)/,'').split('/')[2]
+
+	Git.clone(url, name)
+
+	g = Git.open(name)
+
+	date = Time.now.strftime("%Y%m%d")
+
+	rev = g.log.last.to_s[0..6]
+
+	if forced then
+
+		v = ver
+
+	else
+
+		v = "0.0.0"
+
+	end
+
+	version = v + "+git" + date + "." + rev
+
+ 	FileUtils.mv(name,"#{name}-#{version}")
+
+	xzip("#{name}-#{version}")
+
+	source = "#{name}-%{version}.tar.xz"
+
+	writechanges()
+
+	return version,source
+
+end
+
+def writechanges()
+
+	# TODO
+	return nil
+
+end
+
+def convert(url="")
 
 	# convert https://github.com/marguerite/golang-packaging/archive/8.tar.gz to archive/8/name-8.tar.gz
 	if url.index("github") then
@@ -130,6 +208,14 @@ end
 def download(url="")
 
 	system "wget #{url}"
+
+end
+
+def xzip(filename="")
+
+	system "tar -cf #{filename}.tar #{filename}"
+
+	system "xz -z -9 #{filename}.tar"
 
 end
 
@@ -219,6 +305,8 @@ def init()
 
 	source = opts[:source]
 
+	fg = opts[:forcegit]
+
 	if url then
 
 		unless importpath then
@@ -255,7 +343,15 @@ def init()
 
 	# avoid download twice
 
-	vs = getsource(url)	
+	if fg then 
+
+		vs = getsource(url,true)
+
+	else
+
+		vs = getsource(url,false)	
+
+	end
 
 	version = vs[0]
 
@@ -266,6 +362,8 @@ def init()
 	createprj(pkgname)
 
 	fcopy("#{pkgname}/#{pkgname}.spec")
+
+	system "mv *.xz #{pkgname}/"
 
 	fill("#{pkgname}/#{pkgname}.spec",pkgname,version,summary,url,source)
 
