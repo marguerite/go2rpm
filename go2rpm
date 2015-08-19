@@ -1,55 +1,10 @@
 #!/usr/bin/env ruby
 
 require 'rubygems'
-require 'optparse'
 require 'nokogiri'
 require 'open-uri'
-require 'fileutils'
-require 'git'
-require 'date'
-
-# parse commandline options
-
-def parseopts()
-
-	options = {}
-
-	OptionParser.new do |opts|
-	
-		opts.banner = "Usage: go2rpm [options]"
-
-		opts.on('-p', '--path IMPORTPATH', 'IMPORTPATH') { |v|
-			options[:importpath] = v }
-
-		opts.on('-u', '--url url', 'Upstream URL') { |v|
-			options[:url] = v }
-
-		opts.on('-n', '--name pkgname', 'Package Name') { |v|
-			options[:pkgname] = v }
-		
-		opts.on('-v', '--version version', 'Package Version') { |v|
-			options[:version] = v }
-
-		opts.on('-s', '--source tarball', 'Source') { |v|
-			options[:source] = v }
-
-		opts.on('-f', '--force-git', 'Force git version even there\'s releases') { |v|
-			options[:forcefit] = v }
-
-
-	end.parse!
-
-	return options
-
-end
-
-def getimportpath(url="")
-
-	importpath = url.gsub(/^(https:\/\/|http:\/\/)/,'')
-
-	return importpath
-
-end
+require_relative 'opts.rb'
+require_relative 'git.rb'
 
 def getsummary(url="")
 
@@ -106,7 +61,7 @@ def getsource(url="",forcegit=false)
 
 			else
 
-				s = gitsource(url,true,version)
+				s = Git.new(url,true,version).git
 
 				version = s[0]
 
@@ -116,7 +71,7 @@ def getsource(url="",forcegit=false)
 
 		else
 
-			s = gitsource(url)
+			s = Git.new(url).git
 
 			version = s[0]
 
@@ -133,49 +88,6 @@ def getsource(url="",forcegit=false)
 	end
 
 	return version, source
-
-end
-
-def gitsource(url="",forced=false,ver="")
-
-	name = url.gsub(/^(https:\/\/|http:\/\/)/,'').split('/')[2]
-
-	Git.clone(url, name)
-
-	g = Git.open(name)
-
-	date = Time.now.strftime("%Y%m%d")
-
-	rev = g.log.last.to_s[0..6]
-
-	if forced then
-
-		v = ver
-
-	else
-
-		v = "0.0.0"
-
-	end
-
-	version = v + "+git" + date + "." + rev
-
- 	FileUtils.mv(name,"#{name}-#{version}")
-
-	xzip("#{name}-#{version}")
-
-	source = "#{name}-%{version}.tar.xz"
-
-	writechanges()
-
-	return version,source
-
-end
-
-def writechanges()
-
-	# TODO
-	return nil
 
 end
 
@@ -208,14 +120,6 @@ end
 def download(url="")
 
 	system "wget #{url}"
-
-end
-
-def xzip(filename="")
-
-	system "tar -cf #{filename}.tar #{filename}"
-
-	system "xz -z -9 #{filename}.tar"
 
 end
 
@@ -293,7 +197,7 @@ end
 
 def init()
 
-	opts = parseopts()
+	opts = Opts.new
 
 	url = opts[:url]
 
@@ -306,34 +210,6 @@ def init()
 	source = opts[:source]
 
 	fg = opts[:forcegit]
-
-	if url then
-
-		unless importpath then
-
-			importpath = getimportpath(url)
-
-		end
-
-		array = importpath.split("/")
-
-		website = array[0].gsub(/(\.com|\.org|\.net|\.in)/,'')
-
-		author = array[1]
-
-		name = array[2]
-
-		unless pkgname then
-
-			pkgname = "golang-#{website}-#{author}-#{name}"
-
-		end
-
-	else
-
-		raise "URL is empty, please specify with -u."
-
-	end
 
 	# Summary
 
